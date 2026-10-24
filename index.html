@@ -507,10 +507,10 @@
       width: 100%;
       height: 100%;
       object-fit: cover;
-      transform: scaleX(-1); /* Default for front camera mirror effect */
+      transform: scaleX(-1); /* Default mirror effect for front/webcam */
     }
-    video#webcam.back-camera {
-      transform: scaleX(1); /* Disable mirroring for back camera */
+    video#webcam.no-mirror {
+      transform: scaleX(1); /* Disable mirroring when requested or back camera */
     }
     .countdown-overlay {
       position: absolute;
@@ -546,6 +546,21 @@
     .filter-btn.active {
       background: var(--primary-blue);
       color: #fff;
+    }
+
+    /* Dropdown for Webcam selection */
+    .camera-select {
+      width: 100%;
+      padding: 8px 10px;
+      border: 2px solid var(--primary-blue);
+      border-radius: 10px;
+      background: #ffffff;
+      color: var(--primary-blue);
+      font-family: var(--font-main);
+      font-size: 0.85rem;
+      font-weight: 600;
+      margin-bottom: 10px;
+      cursor: pointer;
     }
 
     /* Filters */
@@ -872,10 +887,12 @@
         </section>
 
         <section class="booth-control-section">
-          <p class="filter-title" style="font-weight: bold; font-size: 1.1rem;">Camera Options</p>
-          <button class="filter-btn active" id="camera-switch-btn" onclick="toggleCamera()" style="width: 100%; margin-bottom: 8px;">📷 Switch Camera (Front)</button>
+          <p class="filter-title" style="font-weight: bold; font-size: 1.1rem;">Webcam / Camera Source</p>
+          <select id="camera-select" class="camera-select" onchange="changeCameraDevice()">
+            <option value="">-- Select Camera Source --</option>
+          </select>
           
-          <p class="filter-title" style="font-weight: bold; font-size: 1.1rem; margin-top: 8px;">Camera Filters</p>
+          <p class="filter-title" style="font-weight: bold; font-size: 1.1rem; margin-top: 4px;">Camera Filters</p>
           <div class="filter-bar">
             <button class="filter-btn active" onclick="setFilter('filter-normal', this)">Normal</button>
             <button class="filter-btn" onclick="setFilter('filter-warm', this)">Warm</button>
@@ -936,7 +953,6 @@
     let currentFilter = 'filter-normal';
     let capturedImages = [];
     let mediaStream = null;
-    let useBackCamera = false; // Tracks current camera facing mode
 
     const frameList = [
       { name: 'Sky Blue ☁️', class: 'frame-color-sky-blue' },
@@ -959,7 +975,7 @@
       document.getElementById(screenId).classList.add('active');
 
       if (screenId === 'screen-booth') {
-        initCamera();
+        initCameraDevices();
         applyFrameToBooth();
       } else if (screenId === 'screen-preview') {
         renderFinalDisplay();
@@ -1002,62 +1018,71 @@
       boothStrip.className = `photostrip ${selectedFrameClass}`;
     }
 
-    async function initCamera() {
+    // Populate camera selector options and initialize the default camera
+    async function initCameraDevices() {
       if (mediaStream) {
         mediaStream.getTracks().forEach(track => track.stop());
         mediaStream = null;
       }
       try {
-        const constraints = { 
-          video: { 
-            width: { ideal: 1280 }, 
-            height: { ideal: 960 }, 
-            facingMode: useBackCamera ? { exact: "environment" } : "user" 
-          }, 
-          audio: false 
-        };
+        // Request initial access to list available devices
+        const tempStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+        tempStream.getTracks().forEach(track => track.stop());
 
-        try {
-          mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
-        } catch (e) {
-          // Fallback if exact environment constraint fails on some browsers/devices
-          mediaStream = await navigator.mediaDevices.getUserMedia({ 
-            video: { width: { ideal: 1280 }, height: { ideal: 960 }, facingMode: useBackCamera ? "environment" : "user" }, 
-            audio: false 
-          });
-        }
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const videoDevices = devices.filter(device => device.kind === 'videoinput');
         
-        const videoElem = document.getElementById('webcam');
-        videoElem.srcObject = mediaStream;
+        const selectElem = document.getElementById('camera-select');
+        selectElem.innerHTML = '';
 
-        // Update video element mirror state and button text
-        const switchBtn = document.getElementById('camera-switch-btn');
-        if (useBackCamera) {
-          videoElem.classList.add('back-camera');
-          switchBtn.innerText = '📷 Switch Camera (Back)';
-        } else {
-          videoElem.classList.remove('back-camera');
-          switchBtn.innerText = '📷 Switch Camera (Front)';
+        videoDevices.forEach((device, index) => {
+          const option = document.createElement('option');
+          option.value = device.deviceId;
+          option.text = device.label || `Webcam / Camera ${index + 1}`;
+          selectElem.appendChild(option);
+        });
+
+        if (videoDevices.length > 0) {
+          startCameraStream(videoDevices[0].deviceId);
         }
       } catch (err) {
-        alert('Camera access denied or unavailable.');
+        console.warn('Could not enumerate devices directly, falling back to default camera:', err);
+        startCameraStream(null);
       }
     }
 
-    function toggleCamera() {
-      useBackCamera = !useBackCamera;
-      initCamera();
+    async function startCameraStream(deviceId) {
+      if (mediaStream) {
+        mediaStream.getTracks().forEach(track => track.stop());
+      }
+
+      const constraints = {
+        video: deviceId ? { deviceId: { exact: deviceId }, width: { ideal: 1280 }, height: { ideal: 960 } } : { width: { ideal: 1280 }, height: { ideal: 960 } },
+        audio: false
+      };
+
+      try {
+        mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
+        const videoElem = document.getElementById('webcam');
+        videoElem.srcObject = mediaStream;
+      } catch (err) {
+        alert('Webcam access denied or unavailable.');
+      }
+    }
+
+    function changeCameraDevice() {
+      const selectElem = document.getElementById('camera-select');
+      const selectedDeviceId = selectElem.value;
+      if (selectedDeviceId) {
+        startCameraStream(selectedDeviceId);
+      }
     }
 
     function setFilter(filterClass, clickedButton) {
       currentFilter = filterClass;
-      document.getElementById('webcam').className = currentFilter + (useBackCamera ? ' back-camera' : '');
-      document.querySelectorAll('.filter-btn').forEach(btn => {
-        if (!btn.id.includes('camera-switch')) {
-          btn.classList.remove('active');
-        }
-      });
-      if (clickedButton && !clickedButton.id.includes('camera-switch')) clickedButton.classList.add('active');
+      document.getElementById('webcam').className = currentFilter;
+      document.querySelectorAll('.filter-btn').forEach(btn => btn.classList.remove('active'));
+      if (clickedButton) clickedButton.classList.add('active');
     }
 
     async function startCaptureSequence() {
@@ -1159,13 +1184,9 @@
       const ctx = canvas.getContext('2d');
 
       ctx.filter = getComputedStyle(video).filter;
-      
-      if (!useBackCamera) {
-        // Mirror back for front camera
-        ctx.translate(canvas.width, 0);
-        ctx.scale(-1, 1);
-      }
-      
+      // Standard mirror correction for desktop webcams
+      ctx.translate(canvas.width, 0);
+      ctx.scale(-1, 1);
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
       return canvas.toDataURL('image/jpeg', 0.95);
